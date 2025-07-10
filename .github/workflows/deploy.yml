@@ -1,0 +1,27 @@
+name: FTP Deploy to Hostinger
+
+on:
+  push:
+    branches:
+      - main  # Ya 'master' agar aap master branch use karte hain
+
+jobs:
+  ftp-deploy:
+    name: 📦 Deploy to Hostinger via FTP
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: FTP Deploy
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
+        with:
+          server: ${{ secrets.FTP_HOST }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          server-dir: ${{ secrets.FTP_TARGET }}
+          exclude: |
+            **/.git*
+            **/.github*
+            **/README.md
