@@ -1,0 +1,12 @@
+{
+    "name": "shabdi/phpspreadsheet-project",
+    "description": "composer require phpoffice/phpspreadsheet",
+    "autoload": {
+        "psr-4": {
+            "Shabdi\\PhpspreadsheetProject\\": "src/"
+        }
+    },
+    "require": {
+        "phpoffice/phpspreadsheet": "^4.4"
+    }
+}

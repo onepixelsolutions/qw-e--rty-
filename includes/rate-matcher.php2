@@ -1,0 +1,108 @@
+<?php
+// SmartBOQ AI – Rate Matcher Full Logic
+
+add_action('admin_menu', function () {
+    add_submenu_page(
+        'smartboq-upload',
+        'Run Rate Matcher',
+        'Run Matcher',
+        'manage_options',
+        'smartboq-match',
+        'smartboq_match_page'
+    );
+});
+
+function smartboq_match_page() {
+    ?>
+    <div class="wrap">
+        <h2>Run Rate Matching</h2>
+        <?php if (isset($_GET['match_status'])): ?>
+            <div class="notice notice-<?php echo esc_attr($_GET['match_status']); ?> is-dismissible">
+                <p><?php echo esc_html($_GET['message']); ?></p>
+            </div>
+        <?php endif; ?>
+        <form method="post">
+            <?php wp_nonce_field('smartboq_match'); ?>
+            <p>This will scan the uploaded BOQ file and match items with the rate database.</p>
+            <?php submit_button('Run Matcher'); ?>
+        </form>
+    </div>
+    <?php
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && check_admin_referer('smartboq_match')) {
+        smartboq_run_matcher();
+    }
+}
+
+function smartboq_run_matcher() {
+    $debug = get_option('smartboq_debug_matcher', false);
+    if (!current_user_can('manage_options')) return;
+
+    if (smartboq_get_status() !== 'draft') {
+        smartboq_redirect_notice('match_status', 'error', 'Status must be DRAFT to run matcher.');
+        return;
+    }
+
+    $upload_dir = wp_upload_dir();
+    $file_path = $upload_dir['basedir'] . '/smartboq-boqs/uploaded_boq.xlsx';
+
+    if (!file_exists($file_path)) {
+        smartboq_redirect_notice('match_status', 'error', 'BOQ file not found.');
+        return;
+    }
+
+    // Load Spreadsheet
+    require_once SMBOQ_PATH . 'vendor/autoload.php';
+    use PhpOffice\PhpSpreadsheet\IOFactory;
+
+    $spreadsheet = IOFactory::load($file_path);
+    $sheet = $spreadsheet->getActiveSheet();
+
+    $highestRow = $sheet->getHighestDataRow();
+    $matched_count = 0;
+
+    smartboq_set_status('processing');
+
+    global $wpdb;
+
+    for ($row = 2; $row <= $highestRow; $row++) {
+        $desc = trim($sheet->getCell("B$row")->getValue()); // Description column
+        if (!$desc) continue;
+
+        // Sanitize for search
+        $desc_sanitized = strtolower(preg_replace('/[^a-zA-Z0-9\s]/', '', $desc));
+
+        // DB Query for Formidable Entries
+        $results = $wpdb->get_row("
+            SELECT meta.post_id,
+                   MAX(CASE WHEN meta.meta_key = 'item_name' THEN meta.meta_value END) AS name,
+                   MAX(CASE WHEN meta.meta_key = 'field_supply' THEN meta.meta_value END) AS supply,
+                   MAX(CASE WHEN meta.meta_key = 'field_install' THEN meta.meta_value END) AS install
+            FROM {$wpdb->prefix}frm_item_metas meta
+            WHERE meta.meta_value LIKE '%$desc_sanitized%'
+            GROUP BY meta.post_id
+            ORDER BY meta.post_id DESC
+            LIMIT 1
+        ");
+
+        if ($results) {
+            $sheet->setCellValue("E$row", $results->supply);   // Supply Rate
+            $sheet->setCellValue("F$row", $results->install);  // Install Rate
+            $matched_count++;
+            if ($debug) error_log("[SmartBOQ] Matched Row $row: $desc");
+        } else {
+            if ($debug) error_log("[SmartBOQ] No match for Row $row: $desc");
+        }
+    }
+
+    smartboq_set_status('complete');
+    $writer = IOFactory::createWriter($spreadsheet, 'Xlsx');
+    $writer->save($file_path);
+
+    smartboq_redirect_notice('match_status', 'success', "$matched_count items matched successfully.");
+}
+
+function smartboq_redirect_notice($param, $type, $message) {
+    wp_redirect(admin_url("admin.php?page=smartboq-match&{$param}={$type}&message=" . urlencode($message)));
+    exit;
+}
